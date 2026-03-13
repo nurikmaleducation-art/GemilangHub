@@ -1,0 +1,977 @@
+const STORAGE_KEY = "instrumen-kelas-v1";
+
+const seedState = {
+  currentUserId: null,
+  users: [
+    { id: "u-teacher-1", name: "Cikgu Aisyah", email: "guru@sekolah.edu", role: "teacher" },
+    { id: "u-student-1", name: "Aiman Firdaus", email: "aiman@murid.edu", role: "student" },
+    { id: "u-student-2", name: "Siti Nabila", email: "nabila@murid.edu", role: "student" }
+  ],
+  classes: [
+    { id: "c-eko-4", name: "Ekonomi T4 K1", subject: "Ekonomi", level: "Tingkatan 4", teacherId: "u-teacher-1" }
+  ],
+  enrollments: [
+    { classId: "c-eko-4", studentId: "u-student-1" },
+    { classId: "c-eko-4", studentId: "u-student-2" }
+  ],
+  topics: [
+    { id: "t-1", classroomId: "c-eko-4", title: "Bab 1: Pengenalan Ekonomi", order: 1 },
+    { id: "t-2", classroomId: "c-eko-4", title: "Bab 2: Pasaran", order: 2 }
+  ],
+  materials: [
+    {
+      id: "m-1",
+      topicId: "t-1",
+      type: "nota",
+      title: "Nota Ringkas Bab 1",
+      fileName: "nota-bab-1.pdf",
+      fileType: "application/pdf",
+      fileData: null,
+      fileSize: 0,
+      ownerId: "u-teacher-1",
+      createdAt: new Date().toISOString()
+    }
+  ],
+  quizzes: [
+    {
+      id: "q-1",
+      topicId: "t-1",
+      title: "Kuiz Asas Bab 1",
+      status: "published",
+      openAt: "2026-03-01T08:00",
+      closeAt: "2026-12-31T23:59",
+      fullMark: 10
+    }
+  ],
+  questions: [
+    {
+      id: "qq-1",
+      quizId: "q-1",
+      type: "mcq",
+      stem: "Apakah maksud ekonomi?",
+      options: [
+        "Kajian tentang perbelanjaan mewah",
+        "Kajian tentang bagaimana sumber terhad digunakan",
+        "Kajian tentang sejarah negara",
+        "Kajian tentang geografi dunia"
+      ],
+      correctAnswer: 1,
+      mark: 5
+    },
+    {
+      id: "qq-2",
+      quizId: "q-1",
+      type: "mcq",
+      stem: "Masalah asas ekonomi berlaku kerana...",
+      options: [
+        "Sumber tidak terhad",
+        "Kehendak manusia terhad",
+        "Sumber terhad dan kehendak tidak terhad",
+        "Semua barang percuma"
+      ],
+      correctAnswer: 2,
+      mark: 5
+    }
+  ],
+  submissions: [
+    {
+      id: "s-1",
+      quizId: "q-1",
+      studentId: "u-student-1",
+      answers: [1, 2],
+      mark: 10,
+      status: "submitted",
+      submittedAt: "2026-03-11T10:00:00.000Z"
+    }
+  ]
+};
+
+const appState = loadState();
+const uiState = {
+  page: "login",
+  selectedClassId: null,
+  selectedTopicId: null,
+  selectedQuizId: null
+};
+
+const navByRole = {
+  teacher: [
+    { id: "teacher-dashboard", label: "Dashboard" },
+    { id: "teacher-classes", label: "Kelas" },
+    { id: "teacher-content", label: "Topik & Bahan" },
+    { id: "teacher-quizzes", label: "Kuiz" },
+    { id: "teacher-performance", label: "Prestasi" }
+  ],
+  student: [
+    { id: "student-home", label: "Laman Utama" },
+    { id: "student-classes", label: "Kelas Saya" },
+    { id: "student-notes", label: "Nota" },
+    { id: "student-quizzes", label: "Latihan/Kuiz" },
+    { id: "student-results", label: "Keputusan" }
+  ]
+};
+
+const appEl = document.getElementById("app");
+const navEl = document.getElementById("nav");
+const logoutButton = document.getElementById("logoutButton");
+const sessionSummaryEl = document.getElementById("sessionSummary");
+const pageTitleEl = document.getElementById("pageTitle");
+const pageEyebrowEl = document.getElementById("pageEyebrow");
+const sidebarEl = document.getElementById("sidebar");
+const menuButtonEl = document.getElementById("menuButton");
+
+logoutButton.addEventListener("click", handleLogout);
+menuButtonEl.addEventListener("click", () => sidebarEl.classList.toggle("open"));
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#sidebar") || event.target.closest("#menuButton")) return;
+  sidebarEl.classList.remove("open");
+});
+
+render();
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return structuredClone(seedState);
+    return { ...structuredClone(seedState), ...JSON.parse(raw) };
+  } catch (error) {
+    console.error("Gagal membaca storan tempatan", error);
+    return structuredClone(seedState);
+  }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+}
+
+function render() {
+  const currentUser = getCurrentUser();
+  syncSelections();
+  renderNavigation(currentUser);
+  renderShell(currentUser);
+  renderPage(currentUser);
+}
+
+function syncSelections() {
+  if (!uiState.selectedClassId && appState.classes.length) {
+    uiState.selectedClassId = appState.classes[0].id;
+  }
+  const topics = getTopicsForSelectedClass();
+  if (!topics.find((topic) => topic.id === uiState.selectedTopicId)) {
+    uiState.selectedTopicId = topics[0]?.id || null;
+  }
+}
+
+function renderNavigation(currentUser) {
+  if (!currentUser) {
+    navEl.innerHTML = "";
+    logoutButton.classList.add("hidden");
+    sessionSummaryEl.textContent = "Sila log masuk untuk mula.";
+    return;
+  }
+
+  navEl.innerHTML = navByRole[currentUser.role]
+    .map((item) => `<button class="${uiState.page === item.id ? "active" : ""}" data-nav="${item.id}" type="button">${item.label}</button>`)
+    .join("");
+
+  navEl.querySelectorAll("[data-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      uiState.page = button.dataset.nav;
+      uiState.selectedQuizId = null;
+      render();
+    });
+  });
+
+  logoutButton.classList.remove("hidden");
+  sessionSummaryEl.textContent = `${currentUser.name} · ${currentUser.role === "teacher" ? "Guru" : "Murid"}`;
+}
+
+function renderShell(currentUser) {
+  if (!currentUser) {
+    pageTitleEl.textContent = "Selamat datang";
+    pageEyebrowEl.textContent = "Sistem pengajaran dan penilaian";
+    return;
+  }
+
+  const titles = {
+    "teacher-dashboard": ["Dashboard Guru", "Prestasi kelas dan tindakan cepat"],
+    "teacher-classes": ["Pengurusan Kelas", "Cipta kelas dan daftar murid"],
+    "teacher-content": ["Topik & Bahan", "Susun kandungan dan lampiran fail"],
+    "teacher-quizzes": ["Pengurusan Kuiz", "Bina kuiz objektif dan jadual"],
+    "teacher-performance": ["Prestasi Murid", "Pantau markah dan kadar siap"],
+    "student-home": ["Laman Utama Murid", "Aktiviti dan kemajuan sendiri"],
+    "student-classes": ["Kelas Saya", "Lihat subjek dan topik"],
+    "student-notes": ["Nota & Lampiran", "Akses bahan pembelajaran"],
+    "student-quizzes": ["Latihan & Kuiz", "Jawab penilaian yang tersedia"],
+    "student-results": ["Keputusan", "Semak markah anda"]
+  };
+
+  const [title, eyebrow] = titles[uiState.page] || ["Instrumen Kelas", "Portal pembelajaran"];
+  pageTitleEl.textContent = title;
+  pageEyebrowEl.textContent = eyebrow;
+}
+
+function renderPage(currentUser) {
+  if (!currentUser) return renderLogin();
+  if (currentUser.role === "teacher") return renderTeacherPage(currentUser);
+  return renderStudentPage(currentUser);
+}
+
+function renderLogin() {
+  const template = document.getElementById("loginTemplate");
+  appEl.innerHTML = "";
+  appEl.appendChild(template.content.cloneNode(true));
+
+  const demoAccountsEl = document.getElementById("demoAccounts");
+  demoAccountsEl.innerHTML = appState.users
+    .map((user) => `<button class="soft" data-demo="${user.id}" type="button">${user.name}<br /><span class="muted">${user.email}</span></button>`)
+    .join("");
+
+  demoAccountsEl.querySelectorAll("[data-demo]").forEach((button) => {
+    button.addEventListener("click", () => loginAs(button.dataset.demo));
+  });
+
+  document.getElementById("loginForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const email = new FormData(event.currentTarget).get("email").toString().trim().toLowerCase();
+    const user = appState.users.find((entry) => entry.email.toLowerCase() === email);
+    if (!user) return alert("Emel tidak ditemui. Gunakan akaun demo atau daftar akaun baharu.");
+    loginAs(user.id);
+  });
+
+  document.getElementById("registerForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = data.get("email").toString().trim().toLowerCase();
+    if (appState.users.some((user) => user.email.toLowerCase() === email)) return alert("Emel ini sudah digunakan.");
+
+    const user = {
+      id: createId("u"),
+      name: data.get("name").toString().trim(),
+      email,
+      role: data.get("role").toString()
+    };
+    appState.users.push(user);
+    saveState();
+    loginAs(user.id);
+  });
+}
+
+function loginAs(userId) {
+  appState.currentUserId = userId;
+  const currentUser = getCurrentUser();
+  uiState.page = currentUser.role === "teacher" ? "teacher-dashboard" : "student-home";
+  saveState();
+  render();
+}
+
+function renderTeacherPage(currentUser) {
+  if (uiState.page === "teacher-classes") return renderTeacherClasses(currentUser);
+  if (uiState.page === "teacher-content") return renderTeacherContent(currentUser);
+  if (uiState.page === "teacher-quizzes") return renderTeacherQuizzes(currentUser);
+  if (uiState.page === "teacher-performance") return renderTeacherPerformance(currentUser);
+  renderTeacherDashboard(currentUser);
+}
+
+function renderStudentPage(currentUser) {
+  if (uiState.page === "student-classes") return renderStudentClasses(currentUser);
+  if (uiState.page === "student-notes") return renderStudentNotes(currentUser);
+  if (uiState.page === "student-quizzes") return renderStudentQuizzes(currentUser);
+  if (uiState.page === "student-results") return renderStudentResults(currentUser);
+  renderStudentHome(currentUser);
+}
+
+function renderTeacherDashboard(currentUser) {
+  const teacherClasses = getTeacherClasses(currentUser.id);
+  const metrics = calculateTeacherMetrics(currentUser.id);
+  const activeQuizzes = getActiveQuizzesForTeacher(currentUser.id);
+  const lateStudents = getLateStudentsForTeacher(currentUser.id);
+
+  appEl.innerHTML = `
+    <div class="grid metrics">
+      <article class="metric"><span class="pill">Kelas aktif</span><h3>${teacherClasses.length}</h3><p>Jumlah kelas di bawah guru ini.</p></article>
+      <article class="metric"><span class="pill">Purata markah</span><h3>${metrics.averageScore}%</h3><p>Diambil daripada semua submission sedia ada.</p></article>
+      <article class="metric"><span class="pill">Kadar siap</span><h3>${metrics.completionRate}%</h3><p>Peratus penghantaran kuiz yang lengkap.</p></article>
+      <article class="metric"><span class="pill">Belum hantar</span><h3>${lateStudents.length}</h3><p>Murid yang masih ada kuiz terbuka.</p></article>
+    </div>
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Ringkasan</p><h3 class="section-title">Prestasi kelas</h3></div></div>
+        <div class="list">${teacherClasses.map(renderClassSummaryCard).join("") || '<div class="empty">Belum ada kelas.</div>'}</div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Kuiz aktif</p><h3 class="section-title">Penilaian semasa</h3></div></div>
+        <div class="quiz-list">${activeQuizzes.map(renderQuizStatusCard).join("") || '<div class="empty">Tiada kuiz aktif lagi.</div>'}</div>
+      </section>
+    </div>
+    <section class="table-card">
+      <div class="table-card-head"><div><p class="eyebrow">Amaran</p><h3 class="section-title">Murid belum menjawab</h3></div></div>
+      ${lateStudents.length ? `
+      <div class="table-wrap"><table><thead><tr><th>Murid</th><th>Kelas</th><th>Kuiz</th><th>Status</th></tr></thead><tbody>
+      ${lateStudents.map((entry) => `<tr><td>${entry.student.name}</td><td>${entry.classroom.name}</td><td>${entry.quiz.title}</td><td><span class="badge danger">Belum hantar</span></td></tr>`).join("")}
+      </tbody></table></div>` : '<div class="empty">Semua murid semasa telah menghantar kuiz aktif.</div>'}
+    </section>
+  `;
+}
+
+function renderTeacherClasses(currentUser) {
+  const teacherClasses = getTeacherClasses(currentUser.id);
+  const studentOptions = appState.users.filter((user) => user.role === "student");
+
+  appEl.innerHTML = `
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Cipta kelas</p><h3 class="section-title">Kelas baharu</h3></div></div>
+        <form id="classForm" class="stack">
+          <label>Nama kelas<input name="name" type="text" placeholder="Ekonomi T4 K2" required /></label>
+          <label>Subjek<input name="subject" type="text" placeholder="Ekonomi" required /></label>
+          <label>Tingkatan / unit<input name="level" type="text" placeholder="Tingkatan 4" required /></label>
+          <button class="primary" type="submit">Simpan kelas</button>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Daftar murid</p><h3 class="section-title">Masukkan murid ke kelas</h3></div></div>
+        <form id="enrollmentForm" class="stack">
+          <label>Kelas<select name="classId">${teacherClasses.map((classroom) => `<option value="${classroom.id}">${classroom.name}</option>`).join("")}</select></label>
+          <label>Murid<select name="studentId">${studentOptions.map((student) => `<option value="${student.id}">${student.name} · ${student.email}</option>`).join("")}</select></label>
+          <button class="ghost" type="submit">Tambah murid</button>
+        </form>
+      </section>
+    </div>
+    <section class="table-card">
+      <div class="table-card-head"><div><p class="eyebrow">Senarai kelas</p><h3 class="section-title">Kelas di bawah anda</h3></div></div>
+      ${teacherClasses.length ? `
+      <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Subjek</th><th>Tingkatan</th><th>Murid</th><th>Topik</th></tr></thead><tbody>
+      ${teacherClasses.map((classroom) => `<tr><td>${classroom.name}</td><td>${classroom.subject}</td><td>${classroom.level}</td><td>${getStudentsInClass(classroom.id).length}</td><td>${appState.topics.filter((topic) => topic.classroomId === classroom.id).length}</td></tr>`).join("")}
+      </tbody></table></div>` : '<div class="empty">Belum ada kelas. Cipta kelas pertama anda di sini.</div>'}
+    </section>
+  `;
+
+  document.getElementById("classForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const classroom = {
+      id: createId("c"),
+      name: data.get("name").toString().trim(),
+      subject: data.get("subject").toString().trim(),
+      level: data.get("level").toString().trim(),
+      teacherId: currentUser.id
+    };
+    appState.classes.push(classroom);
+    uiState.selectedClassId = classroom.id;
+    saveState();
+    render();
+  });
+
+  document.getElementById("enrollmentForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const classId = data.get("classId").toString();
+    const studentId = data.get("studentId").toString();
+    const exists = appState.enrollments.some((entry) => entry.classId === classId && entry.studentId === studentId);
+    if (exists) return alert("Murid ini sudah berada dalam kelas tersebut.");
+    appState.enrollments.push({ classId, studentId });
+    saveState();
+    render();
+  });
+}
+
+function renderTeacherContent(currentUser) {
+  const teacherClasses = getTeacherClasses(currentUser.id);
+  const selectedClassId = uiState.selectedClassId || teacherClasses[0]?.id || "";
+  const topics = appState.topics.filter((topic) => topic.classroomId === selectedClassId).sort((a, b) => a.order - b.order);
+  const selectedTopicId = uiState.selectedTopicId || topics[0]?.id || "";
+  const materials = appState.materials.filter((item) => item.topicId === selectedTopicId);
+
+  appEl.innerHTML = `
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Pilih konteks</p><h3 class="section-title">Topik kelas</h3></div></div>
+        <div class="stack">
+          <label>Kelas<select id="teacherContentClass">${teacherClasses.map((classroom) => `<option value="${classroom.id}" ${classroom.id === selectedClassId ? "selected" : ""}>${classroom.name}</option>`).join("")}</select></label>
+          <label>Topik sedia ada<select id="teacherContentTopic">${topics.map((topic) => `<option value="${topic.id}" ${topic.id === selectedTopicId ? "selected" : ""}>${topic.order}. ${topic.title}</option>`).join("")}</select></label>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Tambah topik</p><h3 class="section-title">Susun pengajaran</h3></div></div>
+        <form id="topicForm" class="stack">
+          <label>Tajuk topik<input name="title" type="text" placeholder="Bab 3: Wang dan Bank" required /></label>
+          <label>Turutan<input name="order" type="number" min="1" value="${topics.length + 1}" required /></label>
+          <button class="primary" type="submit">Tambah topik</button>
+        </form>
+      </section>
+    </div>
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Muat naik bahan</p><h3 class="section-title">Lampiran nota / latihan</h3></div></div>
+        <form id="materialForm" class="stack">
+          <label>Jenis bahan<select name="type"><option value="nota">Nota</option><option value="latihan">Latihan</option><option value="lampiran">Lampiran soalan</option></select></label>
+          <label>Tajuk bahan<input name="title" type="text" placeholder="Nota Bab 3" required /></label>
+          <label>Fail PDF / DOC / DOCX<input name="file" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required /></label>
+          <p class="notice">Saiz fail maksimum untuk simpanan tempatan ialah 3MB.</p>
+          <button class="ghost" type="submit">Simpan bahan</button>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Bahan mengikut topik</p><h3 class="section-title">Senarai lampiran</h3></div></div>
+        <div class="list">${materials.map(renderMaterialCard).join("") || '<div class="empty">Belum ada bahan dalam topik ini.</div>'}</div>
+      </section>
+    </div>
+  `;
+
+  document.getElementById("teacherContentClass").addEventListener("change", (event) => {
+    uiState.selectedClassId = event.target.value;
+    uiState.selectedTopicId = appState.topics.filter((topic) => topic.classroomId === uiState.selectedClassId).sort((a, b) => a.order - b.order)[0]?.id || null;
+    render();
+  });
+
+  document.getElementById("teacherContentTopic").addEventListener("change", (event) => {
+    uiState.selectedTopicId = event.target.value;
+    render();
+  });
+
+  document.getElementById("topicForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const topic = { id: createId("t"), classroomId: selectedClassId, title: data.get("title").toString().trim(), order: Number(data.get("order")) };
+    appState.topics.push(topic);
+    uiState.selectedTopicId = topic.id;
+    saveState();
+    render();
+  });
+
+  document.getElementById("materialForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!selectedTopicId) return alert("Tambah topik dahulu sebelum muat naik bahan.");
+    const data = new FormData(event.currentTarget);
+    const file = data.get("file");
+    if (!(file instanceof File) || !file.name) return alert("Sila pilih fail yang sah.");
+    if (file.size > 3 * 1024 * 1024) return alert("Fail terlalu besar untuk storan tempatan. Gunakan fail 3MB ke bawah.");
+
+    const fileData = await readFileAsDataUrl(file);
+    appState.materials.push({
+      id: createId("m"),
+      topicId: selectedTopicId,
+      type: data.get("type").toString(),
+      title: data.get("title").toString().trim(),
+      fileName: file.name,
+      fileType: file.type || inferFileType(file.name),
+      fileData,
+      fileSize: file.size,
+      ownerId: currentUser.id,
+      createdAt: new Date().toISOString()
+    });
+    saveState();
+    render();
+  });
+
+  bindMaterialDownloads();
+}
+
+function renderTeacherQuizzes(currentUser) {
+  const teacherClasses = getTeacherClasses(currentUser.id);
+  const topics = getTopicsForSelectedClass();
+  const selectedClassId = uiState.selectedClassId || teacherClasses[0]?.id || "";
+  const teacherQuizzes = getTeacherQuizzes(currentUser.id);
+
+  appEl.innerHTML = `
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Pilih topik</p><h3 class="section-title">Konteks kuiz</h3></div></div>
+        <div class="stack">
+          <label>Kelas<select id="teacherQuizClass">${teacherClasses.map((classroom) => `<option value="${classroom.id}" ${classroom.id === selectedClassId ? "selected" : ""}>${classroom.name}</option>`).join("")}</select></label>
+          <label>Topik<select id="teacherQuizTopic">${topics.map((topic) => `<option value="${topic.id}" ${topic.id === uiState.selectedTopicId ? "selected" : ""}>${topic.title}</option>`).join("")}</select></label>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Bina kuiz objektif</p><h3 class="section-title">Tambah penilaian</h3></div></div>
+        <form id="quizForm" class="stack">
+          <label>Tajuk kuiz<input name="title" type="text" placeholder="Kuiz Bab 2" required /></label>
+          <label>Buka pada<input name="openAt" type="datetime-local" required /></label>
+          <label>Tutup pada<input name="closeAt" type="datetime-local" required /></label>
+          <label>Soalan 1<textarea name="stem1" placeholder="Soalan pilihan jawapan" required></textarea></label>
+          <label>Pilihan 1<input name="options1" type="text" placeholder="Pisahkan pilihan dengan |" required /></label>
+          <label>Jawapan betul bagi soalan 1<input name="answer1" type="number" min="1" max="4" value="1" required /></label>
+          <label>Soalan 2<textarea name="stem2" placeholder="Soalan kedua" required></textarea></label>
+          <label>Pilihan 2<input name="options2" type="text" placeholder="Pisahkan pilihan dengan |" required /></label>
+          <label>Jawapan betul bagi soalan 2<input name="answer2" type="number" min="1" max="4" value="1" required /></label>
+          <button class="primary" type="submit">Simpan kuiz</button>
+        </form>
+      </section>
+    </div>
+    <section class="table-card">
+      <div class="table-card-head"><div><p class="eyebrow">Semua kuiz</p><h3 class="section-title">Penilaian yang telah dicipta</h3></div></div>
+      ${teacherQuizzes.length ? `
+      <div class="table-wrap"><table><thead><tr><th>Kuiz</th><th>Topik</th><th>Status</th><th>Soalan</th><th>Markah penuh</th></tr></thead><tbody>
+      ${teacherQuizzes.map((quiz) => `<tr><td>${quiz.title}</td><td>${getTopicById(quiz.topicId)?.title || "-"}</td><td>${renderStatusBadgeLabel(getQuizAvailability(quiz))}</td><td>${appState.questions.filter((question) => question.quizId === quiz.id).length}</td><td>${quiz.fullMark}</td></tr>`).join("")}
+      </tbody></table></div>` : '<div class="empty">Belum ada kuiz. Cipta kuiz pertama anda.</div>'}
+    </section>
+  `;
+
+  document.getElementById("teacherQuizClass").addEventListener("change", (event) => {
+    uiState.selectedClassId = event.target.value;
+    uiState.selectedTopicId = getTopicsForSelectedClass()[0]?.id || null;
+    render();
+  });
+
+  document.getElementById("teacherQuizTopic").addEventListener("change", (event) => {
+    uiState.selectedTopicId = event.target.value;
+  });
+
+  document.getElementById("quizForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!uiState.selectedTopicId) return alert("Pilih atau cipta topik dahulu.");
+    const data = new FormData(event.currentTarget);
+    const questionDefs = [1, 2].map((index) => ({
+      stem: data.get(`stem${index}`).toString().trim(),
+      options: data.get(`options${index}`).toString().split("|").map((item) => item.trim()).filter(Boolean),
+      correctAnswer: Number(data.get(`answer${index}`)) - 1
+    }));
+
+    if (questionDefs.some((question) => question.options.length < 2)) {
+      return alert("Setiap soalan perlu sekurang-kurangnya dua pilihan jawapan.");
+    }
+
+    const quizId = createId("q");
+    appState.quizzes.push({
+      id: quizId,
+      topicId: uiState.selectedTopicId,
+      title: data.get("title").toString().trim(),
+      status: "published",
+      openAt: data.get("openAt").toString(),
+      closeAt: data.get("closeAt").toString(),
+      fullMark: questionDefs.length * 5
+    });
+
+    questionDefs.forEach((question) => {
+      appState.questions.push({
+        id: createId("qq"),
+        quizId,
+        type: "mcq",
+        stem: question.stem,
+        options: question.options,
+        correctAnswer: question.correctAnswer,
+        mark: 5
+      });
+    });
+
+    saveState();
+    render();
+  });
+}
+
+function renderTeacherPerformance(currentUser) {
+  const teacherClasses = getTeacherClasses(currentUser.id);
+
+  appEl.innerHTML = `
+    <section class="table-card">
+      <div class="table-card-head"><div><p class="eyebrow">Prestasi mengikut kelas</p><h3 class="section-title">Ringkasan penuh murid</h3></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Kelas</th><th>Murid</th><th>Purata</th><th>Kuiz siap</th><th>Belum siap</th></tr></thead>
+          <tbody>
+            ${teacherClasses.map((classroom) => {
+              const students = getStudentsInClass(classroom.id);
+              const topics = appState.topics.filter((topic) => topic.classroomId === classroom.id);
+              const quizIds = appState.quizzes.filter((quiz) => topics.some((topic) => topic.id === quiz.topicId)).map((quiz) => quiz.id);
+              return students.map((student) => {
+                const submissions = appState.submissions.filter((submission) => submission.studentId === student.id && quizIds.includes(submission.quizId));
+                const average = submissions.length ? Math.round(submissions.reduce((sum, item) => sum + scoreToPercent(item.quizId, item.mark), 0) / submissions.length) : 0;
+                return `<tr><td>${classroom.name}</td><td>${student.name}</td><td>${average}%</td><td>${submissions.length}</td><td>${Math.max(quizIds.length - submissions.length, 0)}</td></tr>`;
+              }).join("");
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderStudentHome(currentUser) {
+  const classes = getStudentClasses(currentUser.id);
+  const submissions = appState.submissions.filter((submission) => submission.studentId === currentUser.id);
+  const pending = getPendingQuizzesForStudent(currentUser.id);
+  const average = submissions.length ? Math.round(submissions.reduce((sum, item) => sum + scoreToPercent(item.quizId, item.mark), 0) / submissions.length) : 0;
+
+  appEl.innerHTML = `
+    <div class="grid metrics">
+      <article class="metric"><span class="pill">Kelas saya</span><h3>${classes.length}</h3><p>Kelas aktif yang anda sertai.</p></article>
+      <article class="metric"><span class="pill">Kuiz belum siap</span><h3>${pending.length}</h3><p>Aktiviti yang masih perlu dijawab.</p></article>
+      <article class="metric"><span class="pill">Markah purata</span><h3>${average}%</h3><p>Prestasi keseluruhan setakat ini.</p></article>
+      <article class="metric"><span class="pill">Hantaran lengkap</span><h3>${submissions.length}</h3><p>Jumlah kuiz yang telah dihantar.</p></article>
+    </div>
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Fokus sekarang</p><h3 class="section-title">Aktiviti belum siap</h3></div></div>
+        <div class="timeline">
+          ${pending.length ? pending.map((entry) => `<article class="timeline-item"><strong>${entry.quiz.title}</strong><p class="muted">${entry.classroom.name} · ${entry.topic.title}</p><div class="action-row"><span class="badge warning">Tutup ${formatDate(entry.quiz.closeAt)}</span><button class="soft" data-open-quiz="${entry.quiz.id}" type="button">Jawab sekarang</button></div></article>`).join("") : '<div class="empty">Tiada kuiz tertangguh. Kerja bagus.</div>'}
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Bahan topik</p><h3 class="section-title">Nota terkini</h3></div></div>
+        <div class="list">${getRecentMaterialsForStudent(currentUser.id).map(renderMaterialCard).join("") || '<div class="empty">Belum ada bahan baru.</div>'}</div>
+      </section>
+    </div>
+  `;
+
+  bindOpenQuizButtons();
+  bindMaterialDownloads();
+}
+
+function renderStudentClasses(currentUser) {
+  const classes = getStudentClasses(currentUser.id);
+  appEl.innerHTML = `
+    <div class="grid three">
+      ${classes.map((classroom) => {
+        const topics = appState.topics.filter((topic) => topic.classroomId === classroom.id).sort((a, b) => a.order - b.order);
+        return `<section class="panel"><div class="panel-head"><div><p class="eyebrow">${classroom.subject}</p><h3 class="section-title">${classroom.name}</h3></div><span class="pill">${classroom.level}</span></div><div class="list">${topics.length ? topics.map((topic) => `<div class="list-item"><strong>${topic.order}. ${topic.title}</strong><p class="muted">${appState.materials.filter((item) => item.topicId === topic.id).length} bahan · ${appState.quizzes.filter((quiz) => quiz.topicId === topic.id).length} kuiz</p></div>`).join("") : '<div class="empty">Belum ada topik ditambah.</div>'}</div></section>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderStudentNotes(currentUser) {
+  const materials = getStudentMaterials(currentUser.id);
+  appEl.innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">Semua nota</p><h3 class="section-title">Bahan mengikut topik</h3></div></div>
+      <div class="list">${materials.length ? materials.map(renderMaterialCardWithContext).join("") : '<div class="empty">Belum ada nota atau lampiran tersedia.</div>'}</div>
+    </section>
+  `;
+  bindMaterialDownloads();
+}
+
+function renderStudentQuizzes(currentUser) {
+  const selectedQuiz = uiState.selectedQuizId ? getQuizById(uiState.selectedQuizId) : null;
+  const pending = getPendingQuizzesForStudent(currentUser.id);
+  const submittedQuizIds = appState.submissions.filter((submission) => submission.studentId === currentUser.id).map((submission) => submission.quizId);
+
+  if (selectedQuiz) {
+    if (!studentCanAccessQuiz(currentUser.id, selectedQuiz.id)) {
+      uiState.selectedQuizId = null;
+      return render();
+    }
+
+    const questions = appState.questions.filter((question) => question.quizId === selectedQuiz.id);
+    const submission = getSubmission(selectedQuiz.id, currentUser.id);
+    const status = getQuizAvailability(selectedQuiz);
+
+    appEl.innerHTML = `
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">Menjawab kuiz</p><h3 class="section-title">${selectedQuiz.title}</h3></div><button class="ghost" id="backToQuizList" type="button">Kembali</button></div>
+        <p class="muted">${getTopicById(selectedQuiz.topicId)?.title || "-"} · Markah penuh ${selectedQuiz.fullMark}</p>
+        <div class="action-row">${renderStatusBadgeLabel(status)} ${submission ? '<span class="badge success">Sudah dihantar</span>' : ""}</div>
+        ${questions.length ? `
+        <form id="studentQuizForm" class="stack">
+          ${questions.map((question, index) => `
+            <article class="question-card">
+              <strong>Soalan ${index + 1}</strong>
+              <p>${question.stem}</p>
+              <div class="choice-list">
+                ${question.options.map((option, optionIndex) => `
+                  <label class="choice-option">
+                    <input type="radio" name="question-${question.id}" value="${optionIndex}" ${submission && submission.answers[index] === optionIndex ? "checked" : ""} ${submission ? "disabled" : ""} required />
+                    <span>${option}</span>
+                  </label>
+                `).join("")}
+              </div>
+            </article>
+          `).join("")}
+          ${submission ? `<div class="notice">Markah anda: ${submission.mark}/${selectedQuiz.fullMark} (${scoreToPercent(selectedQuiz.id, submission.mark)}%)</div>` : status === "closed" ? `<div class="notice">Kuiz ini sudah ditutup dan tidak boleh dihantar lagi.</div>` : `<button class="primary" type="submit">Hantar jawapan</button>`}
+        </form>` : '<div class="empty">Kuiz ini belum mempunyai soalan.</div>'}
+      </section>
+    `;
+
+    document.getElementById("backToQuizList").addEventListener("click", () => {
+      uiState.selectedQuizId = null;
+      render();
+    });
+
+    if (!submission && questions.length && status !== "closed") {
+      document.getElementById("studentQuizForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        const answers = questions.map((question) => Number(data.get(`question-${question.id}`)));
+        if (answers.some((value) => Number.isNaN(value))) return alert("Sila jawab semua soalan.");
+
+        const mark = questions.reduce((sum, question, index) => sum + (answers[index] === question.correctAnswer ? question.mark : 0), 0);
+        appState.submissions.push({
+          id: createId("s"),
+          quizId: selectedQuiz.id,
+          studentId: currentUser.id,
+          answers,
+          mark,
+          status: "submitted",
+          submittedAt: new Date().toISOString()
+        });
+        saveState();
+        render();
+      });
+    }
+    return;
+  }
+
+  appEl.innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">Senarai kuiz</p><h3 class="section-title">Aktiviti untuk anda</h3></div></div>
+      <div class="quiz-list">
+        ${getStudentAvailableQuizzes(currentUser.id).map((entry) => `
+          <article class="quiz-card">
+            <h4>${entry.quiz.title}</h4>
+            <p class="muted">${entry.classroom.name} · ${entry.topic.title}</p>
+            <div class="action-row">${renderStatusBadgeLabel(getQuizAvailability(entry.quiz))} ${submittedQuizIds.includes(entry.quiz.id) ? '<span class="badge success">Sudah dihantar</span>' : ""}</div>
+            <div class="action-row"><span class="muted">Tutup ${formatDate(entry.quiz.closeAt)}</span><button class="soft" data-open-quiz="${entry.quiz.id}" type="button">${submittedQuizIds.includes(entry.quiz.id) ? "Lihat jawapan" : "Jawab kuiz"}</button></div>
+          </article>
+        `).join("") || '<div class="empty">Tiada kuiz tersedia setakat ini.</div>'}
+      </div>
+      ${pending.length ? '<p class="notice">Ada kuiz aktif yang masih belum anda hantar.</p>' : ""}
+    </section>
+  `;
+
+  bindOpenQuizButtons();
+}
+
+function renderStudentResults(currentUser) {
+  const submissions = appState.submissions.filter((submission) => submission.studentId === currentUser.id);
+  appEl.innerHTML = `
+    <section class="table-card">
+      <div class="table-card-head"><div><p class="eyebrow">Sejarah keputusan</p><h3 class="section-title">Markah dan status penghantaran</h3></div></div>
+      ${submissions.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Kuiz</th><th>Topik</th><th>Markah</th><th>Peratus</th><th>Dihantar pada</th></tr></thead>
+          <tbody>
+            ${submissions.map((submission) => {
+              const quiz = getQuizById(submission.quizId);
+              return `<tr><td>${quiz?.title || "-"}</td><td>${getTopicById(quiz?.topicId)?.title || "-"}</td><td>${submission.mark}/${quiz?.fullMark || 0}</td><td>${scoreToPercent(submission.quizId, submission.mark)}%</td><td>${formatDateTime(submission.submittedAt)}</td></tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>` : '<div class="empty">Anda belum menghantar sebarang kuiz.</div>'}
+    </section>
+  `;
+}
+
+function bindOpenQuizButtons() {
+  appEl.querySelectorAll("[data-open-quiz]").forEach((button) => {
+    button.addEventListener("click", () => {
+      uiState.selectedQuizId = button.dataset.openQuiz;
+      uiState.page = "student-quizzes";
+      render();
+    });
+  });
+}
+
+function bindMaterialDownloads() {
+  appEl.querySelectorAll("[data-download-material]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const material = appState.materials.find((item) => item.id === button.dataset.downloadMaterial);
+      if (!material) return;
+      if (!material.fileData) {
+        return alert("Bahan demo ini belum mempunyai fail sebenar. Muat naik fail anda sendiri untuk cuba fungsi buka semula.");
+      }
+
+      const link = document.createElement("a");
+      link.href = material.fileData;
+      link.download = material.fileName;
+      link.click();
+    });
+  });
+}
+
+function renderMaterialCard(material) {
+  return `<article class="material-card"><h4>${material.title}</h4><p class="muted">${capitalize(material.type)} · ${material.fileName}</p><div class="action-row"><span class="badge">${material.fileType.includes("pdf") ? "PDF" : "DOC/DOCX"}</span><button class="soft" data-download-material="${material.id}" type="button">Buka bahan</button></div></article>`;
+}
+
+function renderMaterialCardWithContext(material) {
+  const topic = getTopicById(material.topicId);
+  const classroom = topic ? getClassroomById(topic.classroomId) : null;
+  return `<article class="material-card"><h4>${material.title}</h4><p class="muted">${classroom?.name || "-"} · ${topic?.title || "-"}</p><div class="action-row"><span class="badge">${capitalize(material.type)}</span><button class="soft" data-download-material="${material.id}" type="button">Buka bahan</button></div></article>`;
+}
+
+function renderClassSummaryCard(classroom) {
+  const students = getStudentsInClass(classroom.id);
+  const topics = appState.topics.filter((topic) => topic.classroomId === classroom.id);
+  const quizIds = appState.quizzes.filter((quiz) => topics.some((topic) => topic.id === quiz.topicId)).map((quiz) => quiz.id);
+  const submissions = appState.submissions.filter((submission) => quizIds.includes(submission.quizId));
+  const average = submissions.length ? Math.round(submissions.reduce((sum, item) => sum + scoreToPercent(item.quizId, item.mark), 0) / submissions.length) : 0;
+  return `<article class="list-item"><strong>${classroom.name}</strong><p class="muted">${students.length} murid · ${topics.length} topik · ${quizIds.length} kuiz</p><div class="action-row"><span class="badge">${classroom.subject}</span><span class="badge success">Purata ${average}%</span></div></article>`;
+}
+
+function renderQuizStatusCard(entry) {
+  return `<article class="quiz-card"><h4>${entry.quiz.title}</h4><p class="muted">${entry.classroom.name} · ${entry.topic.title}</p><div class="action-row">${renderStatusBadgeLabel(getQuizAvailability(entry.quiz))}<span class="badge">${entry.submissionCount}/${entry.studentCount} hantar</span></div></article>`;
+}
+
+function renderStatusBadgeLabel(status) {
+  const map = {
+    open: '<span class="badge success">Sedang dibuka</span>',
+    upcoming: '<span class="badge warning">Belum dibuka</span>',
+    closed: '<span class="badge danger">Sudah ditutup</span>'
+  };
+  return map[status] || '<span class="badge">Status tidak diketahui</span>';
+}
+
+function handleLogout() {
+  appState.currentUserId = null;
+  uiState.page = "login";
+  uiState.selectedQuizId = null;
+  saveState();
+  render();
+}
+
+function getCurrentUser() {
+  return appState.users.find((user) => user.id === appState.currentUserId) || null;
+}
+
+function getTeacherClasses(teacherId) {
+  return appState.classes.filter((classroom) => classroom.teacherId === teacherId);
+}
+
+function getStudentClasses(studentId) {
+  const classIds = appState.enrollments.filter((entry) => entry.studentId === studentId).map((entry) => entry.classId);
+  return appState.classes.filter((classroom) => classIds.includes(classroom.id));
+}
+
+function getStudentsInClass(classId) {
+  const studentIds = appState.enrollments.filter((entry) => entry.classId === classId).map((entry) => entry.studentId);
+  return appState.users.filter((user) => user.role === "student" && studentIds.includes(user.id));
+}
+
+function getTopicsForSelectedClass() {
+  return appState.topics.filter((topic) => topic.classroomId === uiState.selectedClassId).sort((a, b) => a.order - b.order);
+}
+
+function getTopicById(topicId) {
+  return appState.topics.find((topic) => topic.id === topicId);
+}
+
+function getClassroomById(classId) {
+  return appState.classes.find((classroom) => classroom.id === classId);
+}
+
+function getQuizById(quizId) {
+  return appState.quizzes.find((quiz) => quiz.id === quizId);
+}
+
+function getSubmission(quizId, studentId) {
+  return appState.submissions.find((submission) => submission.quizId === quizId && submission.studentId === studentId);
+}
+
+function getTeacherQuizzes(teacherId) {
+  const classIds = getTeacherClasses(teacherId).map((classroom) => classroom.id);
+  const topicIds = appState.topics.filter((topic) => classIds.includes(topic.classroomId)).map((topic) => topic.id);
+  return appState.quizzes.filter((quiz) => topicIds.includes(quiz.topicId));
+}
+
+function calculateTeacherMetrics(teacherId) {
+  const quizzes = getTeacherQuizzes(teacherId);
+  const students = getTeacherClasses(teacherId).flatMap((classroom) => getStudentsInClass(classroom.id));
+  const uniqueStudents = [...new Set(students.map((student) => student.id))];
+  const submissions = appState.submissions.filter((submission) => quizzes.some((quiz) => quiz.id === submission.quizId));
+  const totalPossible = quizzes.length * uniqueStudents.length;
+  const averageScore = submissions.length ? Math.round(submissions.reduce((sum, item) => sum + scoreToPercent(item.quizId, item.mark), 0) / submissions.length) : 0;
+  const completionRate = totalPossible ? Math.round((submissions.length / totalPossible) * 100) : 0;
+  return { averageScore, completionRate };
+}
+
+function getActiveQuizzesForTeacher(teacherId) {
+  return getTeacherQuizzes(teacherId)
+    .filter((quiz) => getQuizAvailability(quiz) === "open")
+    .map((quiz) => {
+      const topic = getTopicById(quiz.topicId);
+      const classroom = topic ? getClassroomById(topic.classroomId) : null;
+      return {
+        quiz,
+        topic,
+        classroom,
+        studentCount: classroom ? getStudentsInClass(classroom.id).length : 0,
+        submissionCount: appState.submissions.filter((submission) => submission.quizId === quiz.id).length
+      };
+    });
+}
+
+function getLateStudentsForTeacher(teacherId) {
+  return getActiveQuizzesForTeacher(teacherId).flatMap((entry) =>
+    getStudentsInClass(entry.classroom.id)
+      .filter((student) => !getSubmission(entry.quiz.id, student.id))
+      .map((student) => ({ ...entry, student }))
+  );
+}
+
+function getStudentMaterials(studentId) {
+  const classIds = getStudentClasses(studentId).map((classroom) => classroom.id);
+  const topicIds = appState.topics.filter((topic) => classIds.includes(topic.classroomId)).map((topic) => topic.id);
+  return appState.materials.filter((material) => topicIds.includes(material.topicId));
+}
+
+function getRecentMaterialsForStudent(studentId) {
+  return getStudentMaterials(studentId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4);
+}
+
+function getStudentAvailableQuizzes(studentId) {
+  return getStudentClasses(studentId).flatMap((classroom) =>
+    appState.topics.filter((topic) => topic.classroomId === classroom.id).flatMap((topic) =>
+      appState.quizzes.filter((quiz) => quiz.topicId === topic.id).map((quiz) => ({ classroom, topic, quiz }))
+    )
+  );
+}
+
+function getPendingQuizzesForStudent(studentId) {
+  return getStudentAvailableQuizzes(studentId)
+    .filter((entry) => getQuizAvailability(entry.quiz) === "open")
+    .filter((entry) => !getSubmission(entry.quiz.id, studentId));
+}
+
+function studentCanAccessQuiz(studentId, quizId) {
+  return getStudentAvailableQuizzes(studentId).some((entry) => entry.quiz.id === quizId);
+}
+
+function getQuizAvailability(quiz) {
+  const now = new Date();
+  const openAt = new Date(quiz.openAt);
+  const closeAt = new Date(quiz.closeAt);
+  if (now < openAt) return "upcoming";
+  if (now > closeAt) return "closed";
+  return "open";
+}
+
+function scoreToPercent(quizId, mark) {
+  const quiz = getQuizById(quizId);
+  return quiz?.fullMark ? Math.round((mark / quiz.fullMark) * 100) : 0;
+}
+
+function createId(prefix) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleDateString("ms-MY", { day: "numeric", month: "short", year: "numeric" }) : "-";
+}
+
+function formatDateTime(value) {
+  return value
+    ? new Date(value).toLocaleString("ms-MY", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "-";
+}
+
+function capitalize(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function inferFileType(fileName) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  return "application/octet-stream";
+}
